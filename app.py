@@ -1,22 +1,24 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "smart_rent_secret_key"  # Required for the popup flash notification system
 
-# Base operational parameters
+# Base hourly rate
 HOURLY_RATE = 50.0
 
-# Core Data Structure: Dictionary tracking discrete slot allocations
+# Core Data Structure: Dictionary mapping brand categories to fixed slots
 inventory = {
-    "APPLE":   {"Slot #1": None, "Slot #2": None, "Slot #3": None},
-    "SAMSUNG": {"Slot #1": None, "Slot #2": None, "Slot #3": None},
-    "GOOGLE":  {"Slot #1": None, "Slot #2": None},
-    "ONEPLUS": {"Slot #1": None, "Slot #2": None}
+    "APPLE":   {"Slot 1": None, "Slot 2": None, "Slot 3": None},
+    "SAMSUNG": {"Slot 1": None, "Slot 2": None, "Slot 3": None},
+    "GOOGLE":  {"Slot 1": None, "Slot 2": None},
+    "ONEPLUS": {"Slot 1": None, "Slot 2": None}
 }
 
 # Stores native python datetime objects for active checkouts
-time_logs = {} 
+time_logs = {}
+
+# Temporary storage to hold receipt details to display on the next page reload
+receipt_popup = None
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -36,22 +38,10 @@ HTML_TEMPLATE = """
 
     <div class="kiosk-header text-center mb-4 shadow-sm">
         <h2 class="fw-bold">📱 Mobile Rent Manager</h2>
-        <p class="lead mb-0 fs-6">Dynamic Time & Fee Tracking Allocation Matrix</p>
+        <p class="lead mb-0 fs-6">Fixed-Slot Device Tracking Matrix</p>
     </div>
 
     <div class="container">
-        
-        {% with messages = get_flashed_messages() %}
-          {% if messages %}
-            {% for message in messages %}
-              <div class="alert alert-success alert-dismissible fade show text-center shadow fw-bold fs-5 mb-4" role="alert">
-                🎉 {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
         <div class="row g-4">
             <div class="col-md-4">
                 <div class="card border-0 shadow-sm p-4 bg-white">
@@ -73,7 +63,7 @@ HTML_TEMPLATE = """
                     </form>
                 </div>
                 <div class="card border-0 shadow-sm p-3 mt-3 bg-light text-center text-muted small fw-medium">
-                    Pricing Metric: ₹{{ rate }}/hour (Billed proportionally per minute)
+                    Pricing Metric: ₹{{ rate }}/hour
                 </div>
             </div>
 
@@ -90,14 +80,18 @@ HTML_TEMPLATE = """
                                     <div class="mt-2 small">
                                         {% if occupant %}
                                             <strong>👤 {{ occupant }}</strong><br>
-                                            <span class="text-muted">Checked Out: {{ logs_data[brand + '_' + slot_id].strftime('%H:%M:%S') }}</span>
+                                            <span class="text-muted">Time: {{ logs_data[brand + '_' + slot_id].strftime('%H:%M:%S') }}</span>
                                         {% else %}
                                             <span class="text-success">✔ Available</span>
                                         {% endif %}
                                     </div>
                                 </div>
                                 {% if occupant %}
-                                    <a href="/return/{{ brand }}/{{ slot_id }}" class="btn btn-sm btn-outline-danger fw-bold">Withdraw & Free</a>
+                                    <form method="POST" action="/withdraw_device">
+                                        <input type="hidden" name="brand" value="{{ brand }}">
+                                        <input type="hidden" name="slot_id" value="{{ slot_id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">Withdraw</button>
+                                    </form>
                                 {% endif %}
                             </div>
                         </div>
@@ -109,14 +103,23 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    {% if popup_text %}
+    <script>
+        alert("{{ popup_text|safe }}");
+    </script>
+    {% endif %}
+
 </body>
 </html>
 """
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, inventory_data=inventory, logs_data=time_logs, rate=HOURLY_RATE)
+    global receipt_popup
+    # Read the popup message text if it exists, then instantly clear it for the next round
+    current_popup = receipt_popup
+    receipt_popup = None 
+    return render_template_string(HTML_TEMPLATE, inventory_data=inventory, logs_data=time_logs, rate=HOURLY_RATE, popup_text=current_popup)
 
 @app.route('/rent', methods=['POST'])
 def rent():
@@ -131,25 +134,26 @@ def rent():
 
     if target_slot:
         inventory[brand][target_slot] = customer
-        # Core Concept: Store the exact object instantiation time
         time_logs[f"{brand}_{target_slot}"] = datetime.now()
-    else:
-        flash(f"Error: No free slots currently available inside the {brand} sector.")
 
     return redirect(url_for('home'))
 
-@app.route('/return/<brand>/<slot_id>')
-def free(brand, slot_id):
+@app.route('/withdraw_device', methods=['POST'])
+def withdraw_device():
+    global receipt_popup
+    brand = request.form.get('brand')
+    slot_id = request.form.get('slot_id')
+
     if brand in inventory and slot_id in inventory[brand]:
         old_user = inventory[brand][slot_id]
         start_time = time_logs.get(f"{brand}_{slot_id}")
         
-        # Reset slot immediately to prevent concurrency deadlocks
+        # 1. CRITICAL: Wipes out the data state inside the Python Dictionary matrix instantly
         inventory[brand][slot_id] = None
         time_logs.pop(f"{brand}_{slot_id}", None)
         
         if start_time:
-            # Calculate the explicit delta between allocation sessions
+            # Calculate elapsed session metrics
             end_time = datetime.now()
             duration = end_time - start_time
             
@@ -158,17 +162,15 @@ def free(brand, slot_id):
             
             # Presentation scaling fallback logic
             if duration_minutes < 1.0:
-                duration_minutes = 15.0  # Scales to 15 mins for presentation calculation variability
+                duration_minutes = 15.0  
                 
             duration_hours = duration_minutes / 60
             calculated_fee = round(duration_hours * HOURLY_RATE, 2)
             
-            # Format tracking details into the popup text
-            receipt_msg = f"Device Returned Safely! | Customer: {old_user} | Active Time: {round(duration_minutes, 1)} Mins | Calculated Fee: ₹{calculated_fee}"
-            flash(receipt_msg)
+            # 2. Build explicit plain text for the browser alert window
+            receipt_popup = f"--- RENTAL RECEIPT ---\\nCustomer: {old_user}\\nDevice: {brand} ({slot_id})\\nDuration: {round(duration_minutes, 1)} Minutes\\nTotal Fee: Rs. {calculated_fee}"
 
     return redirect(url_for('home'))
 
 if __name__ == '__main__':
     app.run(debug=True)
-  
