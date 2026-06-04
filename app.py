@@ -1,10 +1,9 @@
-from flask import Flask, render_template_string, request, redirect, url_for
+from flask import Flask, request, redirect, url_for, render_template_string
 import time
 
 app = Flask(__name__)
 app.secret_key = "smart_rent_premium_key"
 
-# Individual Pricing Profile Per Brand (Rupees per Hour)
 BRAND_RATES = {
     "APPLE": 120.0,
     "SAMSUNG": 80.0,
@@ -38,17 +37,13 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-
     <div class="kiosk-header text-center mb-4 shadow-sm">
         <h2 class="fw-bold">📱 Mobile Rent Manager</h2>
         <p class="lead mb-0 fs-6">Dynamic Multi-Tariff Allocation Engine</p>
     </div>
-
     <div class="container">
         <div class="row g-4">
-            
             <div class="col-md-4">
-                
                 <div class="card border-0 shadow-sm p-4 bg-white mb-4">
                     <h5 class="fw-bold mb-3">Check-Out Device</h5>
                     <form method="POST" action="/rent">
@@ -67,7 +62,6 @@ HTML_TEMPLATE = """
                         <button type="submit" class="btn btn-primary w-100 fw-bold">Allocate Slot Array</button>
                     </form>
                 </div>
-
                 <div class="card border-0 shadow-sm p-3 bg-white">
                     <h6 class="fw-bold text-primary mb-2">📋 LIVE BRAND TARIFFS</h6>
                     <div class="small">
@@ -83,7 +77,6 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
             </div>
-
             <div class="col-md-8">
                 {% for brand, slots in inventory_data.items() %}
                 <div class="brand-section shadow-sm">
@@ -120,16 +113,13 @@ HTML_TEMPLATE = """
                 </div>
                 {% endfor %}
             </div>
-
         </div>
     </div>
-
     {% if popup_text %}
     <script>
         alert("{{ popup_text|safe }}");
     </script>
     {% endif %}
-
 </body>
 </html>
 """
@@ -143,19 +133,22 @@ def home():
 
 @app.route('/rent', methods=['POST'])
 def rent():
+    global receipt_popup
     customer = request.form.get('customer_name').strip().upper()
     brand = request.form.get('brand')
-
+    
     target_slot = None
     for slot_id, occupant in inventory[brand].items():
         if occupant is None:
             target_slot = slot_id
             break
-
+            
     if target_slot:
         inventory[brand][target_slot] = customer
         time_logs[f"{brand}_{target_slot}"] = time.time()
-
+    else:
+        receipt_popup = f"⚠️ ALL SLOTS FULL!\\nNo available slots remaining in the {brand} Bay. Please withdraw a device first."
+        
     return redirect(url_for('home'))
 
 @app.route('/withdraw_device', methods=['POST'])
@@ -163,30 +156,18 @@ def withdraw_device():
     global receipt_popup
     brand = request.form.get('brand')
     slot_id = request.form.get('slot_id')
-
     if brand in inventory and slot_id in inventory[brand]:
         old_user = inventory[brand][slot_id]
         start_time = time_logs.pop(f"{brand}_{slot_id}", None)
-        
-        # Free the slot array instantly
         inventory[brand][slot_id] = None
-        
         if start_time is not None:
             real_seconds_elapsed = time.time() - start_time
-            
-            # FIXED MODIFIER: 1 Second = 0.2 Minutes (5 Seconds = 1 Minute)
             simulated_minutes_used = real_seconds_elapsed * 0.2
-            
-            # Safe minimum baseline so a super-fast click shows a real charge
             if simulated_minutes_used < 1.0:
                 simulated_minutes_used = 1.5
-                
             simulated_hours = simulated_minutes_used / 60.0
-            
-            # Brand-specific lookup matrix
             specific_hourly_rate = BRAND_RATES.get(brand, 40.0)
             calculated_fee = round(simulated_hours * specific_hourly_rate, 2)
-            
             receipt_popup = (
                 f"--- TRANSACT RENTAL RECEIPT ---\\n"
                 f"Customer Name : {old_user}\\n"
@@ -196,7 +177,6 @@ def withdraw_device():
                 f"---------------------------------\\n"
                 f"FINAL AMOUNT  : Rs. {calculated_fee}"
             )
-
     return redirect(url_for('home'))
 
 if __name__ == '__main__':
