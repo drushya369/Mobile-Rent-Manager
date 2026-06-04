@@ -1,12 +1,13 @@
 from flask import Flask, render_template_string, request, redirect, url_for
 from datetime import datetime
+import time
 
 app = Flask(__name__)
+app.secret_key = "smart_rent_secret_key"
 
-# Base hourly rate
+# Fixed rate per hour in Rupees
 HOURLY_RATE = 50.0
 
-# Core Data Structure: Dictionary mapping brand categories to fixed slots
 inventory = {
     "APPLE":   {"Slot 1": None, "Slot 2": None, "Slot 3": None},
     "SAMSUNG": {"Slot 1": None, "Slot 2": None, "Slot 3": None},
@@ -14,10 +15,8 @@ inventory = {
     "ONEPLUS": {"Slot 1": None, "Slot 2": None}
 }
 
-# Stores native python datetime objects for active checkouts
+# Stores the exact system timestamp when the rent starts
 time_logs = {}
-
-# Temporary storage to hold receipt details to display on the next page reload
 receipt_popup = None
 
 HTML_TEMPLATE = """
@@ -63,7 +62,8 @@ HTML_TEMPLATE = """
                     </form>
                 </div>
                 <div class="card border-0 shadow-sm p-3 mt-3 bg-light text-center text-muted small fw-medium">
-                    Pricing Metric: ₹{{ rate }}/hour
+                    Pricing Metric: ₹{{ rate }}/hour <br>
+                    <span class="text-success fw-bold">(Demo Mode: 1 Second = 1 Hour Billed)</span>
                 </div>
             </div>
 
@@ -80,7 +80,7 @@ HTML_TEMPLATE = """
                                     <div class="mt-2 small">
                                         {% if occupant %}
                                             <strong>👤 {{ occupant }}</strong><br>
-                                            <span class="text-muted">Time: {{ logs_data[brand + '_' + slot_id].strftime('%H:%M:%S') }}</span>
+                                            <span class="text-muted">Status: Billed Active</span>
                                         {% else %}
                                             <span class="text-success">✔ Available</span>
                                         {% endif %}
@@ -116,10 +116,9 @@ HTML_TEMPLATE = """
 @app.route('/')
 def home():
     global receipt_popup
-    # Read the popup message text if it exists, then instantly clear it for the next round
     current_popup = receipt_popup
     receipt_popup = None 
-    return render_template_string(HTML_TEMPLATE, inventory_data=inventory, logs_data=time_logs, rate=HOURLY_RATE, popup_text=current_popup)
+    return render_template_string(HTML_TEMPLATE, inventory_data=inventory, rate=HOURLY_RATE, popup_text=current_popup)
 
 @app.route('/rent', methods=['POST'])
 def rent():
@@ -134,7 +133,8 @@ def rent():
 
     if target_slot:
         inventory[brand][target_slot] = customer
-        time_logs[f"{brand}_{target_slot}"] = datetime.now()
+        # Track the exact epoch starting time in seconds
+        time_logs[f"{brand}_{target_slot}"] = time.time()
 
     return redirect(url_for('home'))
 
@@ -146,29 +146,28 @@ def withdraw_device():
 
     if brand in inventory and slot_id in inventory[brand]:
         old_user = inventory[brand][slot_id]
-        start_time = time_logs.get(f"{brand}_{slot_id}")
+        start_time = time_logs.pop(f"{brand}_{slot_id}", None)
         
-        # 1. CRITICAL: Wipes out the data state inside the Python Dictionary matrix instantly
+        # Free the slot instantly
         inventory[brand][slot_id] = None
-        time_logs.pop(f"{brand}_{slot_id}", None)
         
-        if start_time:
-            # Calculate elapsed session metrics
-            end_time = datetime.now()
-            duration = end_time - start_time
+        if start_time is not None:
+            end_time = time.time()
+            # Calculate the total seconds passed since checkout
+            elapsed_seconds = end_time - start_time
             
-            duration_seconds = duration.total_seconds()
-            duration_minutes = duration_seconds / 60
+            # SIMULATION LOGIC: We treat 1 real second as 1 hour of usage 
+            # to show the dynamic pricing calculation scale instantly during your viva.
+            simulated_hours = elapsed_seconds
             
-            # Presentation scaling fallback logic
-            if duration_minutes < 1.0:
-                duration_minutes = 15.0  
+            # Enforce a minimum scale so it never reads zero
+            if simulated_hours < 0.1:
+                simulated_hours = 0.5
                 
-            duration_hours = duration_minutes / 60
-            calculated_fee = round(duration_hours * HOURLY_RATE, 2)
+            calculated_fee = round(simulated_hours * HOURLY_RATE, 2)
             
-            # 2. Build explicit plain text for the browser alert window
-            receipt_popup = f"--- RENTAL RECEIPT ---\\nCustomer: {old_user}\\nDevice: {brand} ({slot_id})\\nDuration: {round(duration_minutes, 1)} Minutes\\nTotal Fee: Rs. {calculated_fee}"
+            # Display accurate simulated metrics dynamically
+            receipt_popup = f"--- RENTAL RECEIPT ---\\nCustomer: {old_user}\\nDevice: {brand} ({slot_id})\\nSimulated Duration: {round(simulated_hours, 2)} Hours\\nTotal Charges: Rs. {calculated_fee}"
 
     return redirect(url_for('home'))
 
