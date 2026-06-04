@@ -4,7 +4,7 @@ import time
 app = Flask(__name__)
 app.secret_key = "smart_rent_premium_key"
 
-# 1. INDIVIDUAL PRICING PROFILE PER BRAND
+# Individual Pricing Profile Per Brand (Rupees per Hour)
 BRAND_RATES = {
     "APPLE": 120.0,
     "SAMSUNG": 80.0,
@@ -47,10 +47,8 @@ HTML_TEMPLATE = """
     <div class="container">
         <div class="row g-4">
             
-            <!-- Left Command Panel -->
             <div class="col-md-4">
                 
-                <!-- ALLOCATION CONTROLLER -->
                 <div class="card border-0 shadow-sm p-4 bg-white mb-4">
                     <h5 class="fw-bold mb-3">Check-Out Device</h5>
                     <form method="POST" action="/rent">
@@ -70,7 +68,6 @@ HTML_TEMPLATE = """
                     </form>
                 </div>
 
-                <!-- TARIFF SHEET CARD -->
                 <div class="card border-0 shadow-sm p-3 bg-white">
                     <h6 class="fw-bold text-primary mb-2">📋 LIVE BRAND TARIFFS</h6>
                     <div class="small">
@@ -81,13 +78,12 @@ HTML_TEMPLATE = """
                         </div>
                         {% endfor %}
                     </div>
-                    <div class="text-center text-danger fw-bold small mt-2" style="font-size: 0.75rem;">
-                        ⚡ SIMULATION SCALE: 1 REAL SECOND = 2.6 MINUTES RENTED
+                    <div class="text-center text-success fw-bold small mt-2" style="font-size: 0.75rem;">
+                        ⏱️ LIVE TIMELINE: 5 REAL SECONDS = 1 MINUTE RENTED
                     </div>
                 </div>
             </div>
 
-            <!-- Right Visual Slots Dashboard -->
             <div class="col-md-8">
                 {% for brand, slots in inventory_data.items() %}
                 <div class="brand-section shadow-sm">
@@ -106,7 +102,7 @@ HTML_TEMPLATE = """
                                             <strong>👤 {{ occupant }}</strong><br>
                                             <span class="text-danger fw-bold">Status: Billing Active</span>
                                         {% else %}
-                                            <span class="text-success fw-semibold">✔ Clear / Vacant</span>
+                                            <span class="text-success">✔ Vacant</span>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -172,19 +168,22 @@ def withdraw_device():
         old_user = inventory[brand][slot_id]
         start_time = time_logs.pop(f"{brand}_{slot_id}", None)
         
+        # Free the slot array instantly
         inventory[brand][slot_id] = None
         
         if start_time is not None:
             real_seconds_elapsed = time.time() - start_time
             
-            # Warp calculation: converts real waiting seconds into realistic rental intervals
-            simulated_minutes_used = real_seconds_elapsed * 160.0
-            if simulated_minutes_used < 5.0:
-                simulated_minutes_used = 5.0
+            # FIXED MODIFIER: 1 Second = 0.2 Minutes (5 Seconds = 1 Minute)
+            simulated_minutes_used = real_seconds_elapsed * 0.2
+            
+            # Safe minimum baseline so a super-fast click shows a real charge
+            if simulated_minutes_used < 1.0:
+                simulated_minutes_used = 1.5
                 
             simulated_hours = simulated_minutes_used / 60.0
             
-            # PULLS THE DYNAMIC RATE MATCHING THIS EXACT BRAND
+            # Brand-specific lookup matrix
             specific_hourly_rate = BRAND_RATES.get(brand, 40.0)
             calculated_fee = round(simulated_hours * specific_hourly_rate, 2)
             
